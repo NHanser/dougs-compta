@@ -12,7 +12,7 @@ import type { DougsClient } from '@plokkke/dougs-compta';
 import { CREDENTIALS_NAME, dougsClient } from './client';
 import { toNodeError } from './errors';
 import { listSearch } from './lookups';
-import { findOperation, OPERATIONS, toJson, type OperationDefinition } from './operations';
+import { DownloadedFile, findOperation, OPERATIONS, toJson, type OperationDefinition } from './operations';
 import { buildProperties } from './properties';
 
 export class Dougs implements INodeType {
@@ -23,7 +23,7 @@ export class Dougs implements INodeType {
     group: ['transform'],
     version: 1,
     subtitle: '={{ $parameter["operation"] + ": " + $parameter["resource"] }}',
-    description: 'Record expenses, mileage allowances and invoices in Dougs',
+    description: 'List operations, record expenses and invoices, and set a zero VAT rate in Dougs',
     defaults: { name: 'Dougs' },
     usableAsTool: true,
     inputs: [NodeConnectionTypes.Main],
@@ -44,19 +44,30 @@ export class Dougs implements INodeType {
     const client = await dougsClient(this);
     const output: INodeExecutionData[] = [];
     for (let item = 0; item < this.getInputData().length; item++) {
-      output.push(await runItem(this, client, definition, item));
+      output.push(...(await runItem(this, client, definition, item)));
     }
     return [output];
   }
 }
 
-async function runItem(context: IExecuteFunctions, client: DougsClient, definition: OperationDefinition, item: number) {
+async function runItem(
+  context: IExecuteFunctions,
+  client: DougsClient,
+  definition: OperationDefinition,
+  item: number,
+): Promise<INodeExecutionData[]> {
   try {
-    return { json: toJson(await definition.run(client, context, item)), pairedItem: { item } };
+    const value = await definition.run(client, context, item);
+    if (value instanceof DownloadedFile) {
+      const binary = await context.helpers.prepareBinaryData(Buffer.from(value.data), value.fileName, value.mimeType);
+      return [{ json: toJson(value.metadata), binary: { [value.propertyName]: binary }, pairedItem: { item } }];
+    }
+    const rows = Array.isArray(value) ? value : [value];
+    return rows.map((row) => ({ json: toJson(row), pairedItem: { item } }));
   } catch (error) {
     if (!context.continueOnFail()) {
       throw toNodeError(context.getNode(), error, item);
     }
-    return { json: { error: (error as Error).message }, pairedItem: { item } };
+    return [{ json: { error: (error as Error).message }, pairedItem: { item } }];
   }
 }

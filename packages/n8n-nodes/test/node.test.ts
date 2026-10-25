@@ -15,8 +15,10 @@ describe('buildProperties', () => {
   it('shows each field only for the resource and operations that use it', () => {
     expect(shownFor(properties, 'amount')).toEqual([{ resource: ['expense'], operation: ['create'] }]);
     expect(shownFor(properties, 'operationId')).toEqual([
-      { resource: ['operation'], operation: ['validate', 'invalidate', 'delete'] },
+      { resource: ['operation'], operation: ['validate', 'invalidate', 'delete', 'setVat'] },
     ]);
+    expect(shownFor(properties, 'q')).toEqual([{ resource: ['operation'], operation: ['list'] }]);
+    expect(shownFor(properties, 'from')).toEqual([{ resource: ['operation'], operation: ['list'] }]);
     expect(shownFor(properties, 'companyId')).toHaveLength(4);
   });
 
@@ -25,9 +27,9 @@ describe('buildProperties', () => {
     expect(operations).toEqual([
       ['Create'],
       ['Create'],
-      ['Validate', 'Invalidate', 'Delete'],
+      ['Validate', 'Invalidate', 'Delete', 'List', 'Set VAT'],
       ['Request Code', 'Verify Code'],
-      ['Upload'],
+      ['Upload', 'Download'],
     ]);
   });
 });
@@ -54,6 +56,21 @@ describe('fields', () => {
   it('maps VAT options to the SDK exemption', () => {
     expect(fields.vatExemption.read(contextWith({ vatExemption: 'none' }), 0)).toBe(false);
     expect(fields.vatExemption.read(contextWith({ vatExemption: 'exempt' }), 0)).toBe(true);
+  });
+
+  it('accepts each zero-rate VAT reason', () => {
+    const reasons = [
+      'exemption:outbound:insideEuropeanUnion',
+      'exemption:outbound:outsideEuropeanUnion',
+      'exemption:outbound:nonApplicable',
+      'exemption:outbound:noAccountingDocument',
+    ];
+    const reasonField = buildProperties(OPERATIONS).find((property) => property.name === 'vatExemptionReason');
+    expect(reasonField?.type).toBe('options');
+    expect(reasonField?.options?.map((option) => option.value)).toEqual(reasons);
+    for (const reason of reasons) {
+      expect(fields.vatExemptionReason.read(contextWith({ vatExemptionReason: reason }), 0)).toBe(reason);
+    }
   });
 
   it('treats an empty car as none', () => {

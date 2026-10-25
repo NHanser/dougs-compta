@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { DougsClient, OPERATIONS_PAGE_SIZE } from '../src/client';
+import { ZERO_VAT_REASONS } from '../src/vat';
 import { DougsSchemaError } from '../src/errors';
 import { answeringLoginProbe, json, noSleep, scriptedFetch, status, type Reply } from './fake-fetch';
 import { operation, user, vendorInvoice } from './fixtures';
@@ -165,4 +166,138 @@ describe('DougsClient endpoints', () => {
 
     await expect(client.sessionToken()).resolves.toBe('s3ss10n');
   });
+
+  it('lists raw operations with every optional filter combined', async () => {
+    const inside = { id: 1, date: '2026-04-02', wording: 'ads', extra: true };
+    const outside = { id: 2, date: '2026-01-01', wording: 'ads' };
+    const { client, requests } = dougs(loginReply(), json([inside, outside, { id: 3 }]));
+
+    await expect(
+      client.listOperationsRaw(42, {
+        q: 'ads',
+        type: 'expense',
+        validated: false,
+        date: '2026-04-02',
+        from: '2026-04-01',
+        to: '2026-04-30',
+      }),
+    ).resolves.toEqual([inside]);
+    expect(requests[1]?.url.search).toBe('?type=expense&validated=false&date=2026-04-02&q=ads&limit=500&offset=0');
+  });
+
+  it('lists every page with no filter when the optional fields are empty', async () => {
+    const { client, requests } = dougs(loginReply(), json([{ id: 1 }, { id: 2, deleted: true }]));
+
+    await expect(client.listOperationsRaw(42, { q: '  ', from: '', to: '' })).resolves.toEqual([
+      { id: 1 },
+      { id: 2, deleted: true },
+    ]);
+    expect(requests[1]?.url.search).toBe('?limit=500&offset=0');
+  });
+
+  it('refuses a search longer than 200 characters', async () => {
+    const { client, requests } = dougs();
+
+    await expect(client.listOperationsRaw(42, { q: 'a'.repeat(201) })).rejects.toThrow(RangeError);
+    expect(requests).toHaveLength(0);
+  });
+
+  it.each(ZERO_VAT_REASONS)('clears VAT on the publicité line, then stores %s', async (reason) => {
+    const initial = operation(9, {
+      breakdowns: [
+        {
+          id: 7,
+          amount: 12.5,
+          categoryWording: 'Publicité et référencement',
+          isCounterpart: false,
+          vatRate: 0.2,
+          vatAmount: 2,
+          vatAmountWithRecoverageRate: 2,
+          isVatAmountManuallyModified: false,
+          manualVatAmount: null,
+          associationData: { vatExemptionReason: 'old' },
+        },
+        { id: 8, isCounterpart: true, categoryWording: 'Publicité et référencement' },
+      ],
+    });
+    const { client, requests } = dougs(
+      loginReply(),
+      json(initial),
+      (request) => json(request.body),
+      (request) => json(request.body),
+      json({ id: 9, stored: true }),
+    );
+
+    await expect(client.setZeroVat(42, 9, reason)).resolves.toMatchObject({
+      stored: true,
+    });
+    const posts = requests.filter(
+      (request) => request.method === 'POST' && request.url.pathname.endsWith('/operations/9'),
+    );
+    const firstLine = publicite(posts[0]?.body);
+    expect(firstLine).toMatchObject({
+      vatRate: null,
+      vatAmount: 0,
+      vatAmountWithRecoverageRate: 0,
+      isVatAmountManuallyModified: true,
+      manualVatAmount: 0,
+    });
+    expect(firstLine.associationData).not.toHaveProperty('vatExemptionReason');
+    expect(publicite(posts[1]?.body).associationData).toMatchObject({
+      vatExemptionReason: reason,
+    });
+  });
+
+  it('skips the VAT writes when the line already has the reason', async () => {
+    const done = operation(9, {
+      breakdowns: [
+        {
+          id: 7,
+          categoryWording: 'Publicité et référencement',
+          isCounterpart: false,
+          vatRate: null,
+          vatAmount: 0,
+          vatAmountWithRecoverageRate: 0,
+          isVatAmountManuallyModified: true,
+          manualVatAmount: 0,
+          associationData: { vatExemptionReason: 'exemption:outbound:insideEuropeanUnion' },
+        },
+      ],
+    });
+    const { client, requests } = dougs(loginReply(), json(done), json(done));
+
+    await client.setZeroVat(42, 9, 'exemption:outbound:insideEuropeanUnion');
+    expect(requests.filter((request) => request.method === 'POST')).toHaveLength(1);
+  });
+
+  it('downloads a vendor invoice through its file path', async () => {
+    const { client, requests } = dougs(loginReply(), json(vendorInvoice), new Response(new Uint8Array([9, 8])));
+
+    await expect(client.downloadVendorInvoice(42, vendorInvoice.id)).resolves.toMatchObject({
+      invoice: { fileName: 'invoice.pdf' },
+      bytes: new Uint8Array([9, 8]),
+    });
+    expect(requests.map((request) => request.url.pathname)).toEqual([
+      '/auth/api/login',
+      `/companies/42/vendor-invoices/${vendorInvoice.id}`,
+      vendorInvoice.filePath,
+    ]);
+  });
+
+  it('refuses a vendor invoice whose file path is not a download action', async () => {
+    const { client } = dougs(loginReply(), json({ ...vendorInvoice, filePath: 'https://example.invalid/file' }));
+
+    await expect(client.downloadVendorInvoice(42, vendorInvoice.id)).rejects.toThrow(RangeError);
+  });
 });
+
+function publicite(body: unknown) {
+  const breakdowns = (body as { breakdowns?: Array<Record<string, unknown>> }).breakdowns ?? [];
+  const line = breakdowns.find(
+    (item) => item.isCounterpart !== true && item.categoryWording === 'Publicité et référencement',
+  );
+  if (!line) {
+    throw new Error('missing publicité line');
+  }
+  return line as { associationData?: Record<string, unknown> };
+}

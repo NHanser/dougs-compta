@@ -6,6 +6,17 @@ import { authFrom } from '../../credentials/DougsLoginApi.credentials';
 import { CREDENTIALS_NAME } from './client';
 import { fields, type FieldName } from './fields';
 
+/** Invoice bytes plus the metadata returned by the vendor-invoice GET. */
+export class DownloadedFile {
+  constructor(
+    readonly metadata: Record<string, unknown>,
+    readonly propertyName: string,
+    readonly fileName: string,
+    readonly mimeType: string,
+    readonly data: Uint8Array,
+  ) {}
+}
+
 export const RESOURCES = [
   { name: 'Expense', value: 'expense' },
   { name: 'Mileage Allowance', value: 'mileageAllowance' },
@@ -88,6 +99,33 @@ const BOOKKEEPING_OPERATIONS: OperationDefinition[] = [
     },
   },
   {
+    resource: 'operation',
+    value: 'list',
+    name: 'List',
+    action: 'List operations',
+    fields: ['companyId', 'q', 'type', 'validated', 'filterDate', 'from', 'to'],
+    run: (client, context, item) =>
+      client.listOperationsRaw(fields.companyId.read(context, item), {
+        q: fields.q.read(context, item),
+        type: fields.type.read(context, item),
+        validated: fields.validated.read(context, item),
+        date: fields.filterDate.read(context, item),
+        from: fields.from.read(context, item),
+        to: fields.to.read(context, item),
+      }),
+  },
+  {
+    resource: 'operation',
+    value: 'setVat',
+    name: 'Set VAT',
+    action: 'Set a zero VAT rate and its reason',
+    fields: ['companyId', 'operationId', 'vatExemptionReason'],
+    run: (client, context, item) => {
+      const [companyId, operationId] = companyAndOperation(context, item);
+      return client.setZeroVat(companyId, operationId, fields.vatExemptionReason.read(context, item));
+    },
+  },
+  {
     resource: 'vendorInvoice',
     value: 'upload',
     name: 'Upload',
@@ -102,6 +140,22 @@ const BOOKKEEPING_OPERATIONS: OperationDefinition[] = [
         binary.fileName ?? 'invoice.pdf',
         content,
       );
+    },
+  },
+  {
+    resource: 'vendorInvoice',
+    value: 'download',
+    name: 'Download',
+    action: 'Download a vendor invoice',
+    fields: ['companyId', 'vendorInvoiceId', 'outputBinary'],
+    run: async (client, context, item) => {
+      const file = await client.downloadVendorInvoice(
+        fields.companyId.read(context, item),
+        fields.vendorInvoiceId.read(context, item),
+      );
+      const fileName = typeof file.invoice.fileName === 'string' ? file.invoice.fileName : 'invoice';
+      const mimeType = typeof file.invoice.fileType === 'string' ? file.invoice.fileType : 'application/octet-stream';
+      return new DownloadedFile(file.invoice, fields.outputBinary.read(context, item), fileName, mimeType, file.bytes);
     },
   },
 ];

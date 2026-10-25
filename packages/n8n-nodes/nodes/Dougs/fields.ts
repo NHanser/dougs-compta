@@ -1,6 +1,14 @@
 import type { IExecuteFunctions, INodeProperties } from 'n8n-workflow';
 
-import { eurosToCents, VAT_EXEMPTION_REASONS, type VatExemptionReason } from '@plokkke/dougs-compta';
+import {
+  DEFAULT_ZERO_VAT_REASON,
+  eurosToCents,
+  MAX_OPERATION_SEARCH_LENGTH,
+  VAT_EXEMPTION_REASONS,
+  ZERO_VAT_REASONS,
+  type VatExemptionReason,
+  type ZeroVatReason,
+} from '@plokkke/dougs-compta';
 
 export type FieldProperty = Omit<INodeProperties, 'displayOptions'>;
 
@@ -39,6 +47,16 @@ function locator(name: string, displayName: string, searchListMethod: string, se
 
 /** Keeps the calendar day typed in the n8n date picker, whatever the timezone of the instance. */
 const toCalendarDate = (value: unknown): string => String(value ?? '').slice(0, 10);
+
+const optionalText = (value: unknown): string | undefined => {
+  const text = String(value ?? '').trim();
+  return text || undefined;
+};
+
+const optionalDate = (value: unknown): string | undefined => {
+  const text = optionalText(value);
+  return text === undefined ? undefined : text.slice(0, 10);
+};
 
 const VAT_OPTIONS = [
   { name: 'No Exemption', value: 'none' },
@@ -105,6 +123,132 @@ export const fields = {
       hint: 'The code received by email',
     },
     (v) => String(v ?? ''),
+  ),
+  q: field(
+    {
+      displayName: 'Search',
+      name: 'q',
+      type: 'string',
+      default: '',
+      placeholder: 'e.g. invoice, supplier, FaceBK',
+      hint: `Free text sent as q, up to ${MAX_OPERATION_SEARCH_LENGTH} characters. Leave empty to skip.`,
+    },
+    (value) => {
+      const text = optionalText(value);
+      if (text !== undefined && text.length > MAX_OPERATION_SEARCH_LENGTH) {
+        throw new RangeError(`Search must be at most ${MAX_OPERATION_SEARCH_LENGTH} characters`);
+      }
+      return text;
+    },
+  ),
+  type: field(
+    {
+      displayName: 'Type',
+      name: 'type',
+      type: 'string',
+      default: '',
+      hint: 'Optional operation type. Leave empty to skip.',
+    },
+    optionalText,
+  ),
+  validated: field(
+    {
+      displayName: 'Validated',
+      name: 'validated',
+      type: 'options',
+      default: 'any',
+      options: [
+        { name: 'Any', value: 'any' },
+        { name: 'Validated', value: 'true' },
+        { name: 'Not Validated', value: 'false' },
+      ],
+    },
+    (value): boolean | undefined => (value === 'true' ? true : value === 'false' ? false : undefined),
+  ),
+  filterDate: field(
+    {
+      displayName: 'Date',
+      name: 'filterDate',
+      type: 'dateTime',
+      default: '',
+      hint: 'Optional single day, sent as date. Leave empty to skip.',
+    },
+    optionalDate,
+  ),
+  from: field(
+    {
+      displayName: 'From',
+      name: 'from',
+      type: 'dateTime',
+      default: '',
+      hint: 'Optional start of a date range, inclusive. Applied together with the other filters.',
+    },
+    optionalDate,
+  ),
+  to: field(
+    {
+      displayName: 'To',
+      name: 'to',
+      type: 'dateTime',
+      default: '',
+      hint: 'Optional end of a date range, inclusive.',
+    },
+    optionalDate,
+  ),
+  vatExemptionReason: field(
+    {
+      displayName: 'Zero VAT Reason',
+      name: 'vatExemptionReason',
+      type: 'options',
+      default: DEFAULT_ZERO_VAT_REASON,
+      required: true,
+      options: [
+        { name: 'Inside EU Purchase at 20%', value: 'exemption:outbound:insideEuropeanUnion' },
+        { name: 'Outside EU Purchase', value: 'exemption:outbound:outsideEuropeanUnion' },
+        { name: 'VAT Not Applicable', value: 'exemption:outbound:nonApplicable' },
+        { name: 'Lost Supporting Documents', value: 'exemption:outbound:noAccountingDocument' },
+      ],
+    },
+    (value): ZeroVatReason => {
+      const text = String(value ?? '');
+      if (!(ZERO_VAT_REASONS as readonly string[]).includes(text)) {
+        throw new RangeError(`Unknown zero VAT reason "${text}"`);
+      }
+      return text as ZeroVatReason;
+    },
+  ),
+  vendorInvoiceId: field(
+    {
+      displayName: 'Vendor Invoice ID',
+      name: 'vendorInvoiceId',
+      type: 'string',
+      default: '',
+      required: true,
+    },
+    (value) => {
+      const id = String(value ?? '').trim();
+      if (!id) {
+        throw new RangeError('Vendor Invoice ID is required');
+      }
+      return id;
+    },
+  ),
+  outputBinary: field(
+    {
+      displayName: 'Output Binary Field',
+      name: 'outputBinary',
+      type: 'string',
+      default: 'data',
+      required: true,
+      hint: 'Field that receives the downloaded invoice file',
+    },
+    (value) => {
+      const name = String(value ?? '').trim();
+      if (!name) {
+        throw new RangeError('Output binary field is required');
+      }
+      return name;
+    },
   ),
   binaryPropertyName: field(
     {

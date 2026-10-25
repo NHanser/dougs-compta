@@ -1,4 +1,4 @@
-export { COMPANY_COLLECTIONS, DougsClient, OPERATIONS_PAGE_SIZE } from './client';
+export { COMPANY_COLLECTIONS, DougsClient, MAX_OPERATION_SEARCH_LENGTH, OPERATIONS_PAGE_SIZE } from './client';
 export type { CategoryType, CompanyCollection, DougsClientOptions, OperationsQuery } from './client';
 export { DougsApiError, DougsAuthError, DougsMfaRequiredError, DougsSchemaError } from './errors';
 export { DEFAULT_RETRY_POLICY, DOUGS_BASE_URL } from './http';
@@ -11,3 +11,5 @@ export { VAT_EXEMPTION_REASONS } from './payloads';
 export type { ExpenseInput, IsoDate, MileageInput, VatExemptionReason } from './payloads';
 export type { ApiRecord, Car, Category, Company, Operation, Partner, User, VendorInvoice } from './schemas';
 export type { DougsAuth } from './session';
+export { DEFAULT_ZERO_VAT_REASON, PUBLICITE_CATEGORY, ZERO_VAT_REASONS } from './vat';
+export type { ZeroVatReason } from './vat';
